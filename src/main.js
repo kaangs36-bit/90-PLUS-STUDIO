@@ -252,90 +252,55 @@ const toast = (m) => {
   );
   setTimeout(() => $(".toast")?.remove(), 2600);
 };
-const saveLocal = () =>
-  localStorage.setItem("studio90_state", JSON.stringify(state));
-const loadLocal = () => {
-  try {
-    const d = JSON.parse(localStorage.getItem("studio90_state"));
-    if (d) state = d;
-  } catch {}
-};
-async function sync() {
-  saveLocal();
-  if (!session || !workspace || !online) return;
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(async () => {
-    const { error } = await sb
-      .from("studio_workspace_state")
-      .upsert(
-        {
-          workspace_id: workspace.id,
-          data: state,
-          updated_by: session.user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "workspace_id" },
-      );
-    if (error) console.warn(error);
-  }, 600);
-}
-function normalizeState(s) {
-  const d = baseState();
-  s = s && Object.keys(s).length ? s : d;
-  [
-    "ideas",
-    "contents",
-    "tasks",
-    "media",
-    "trash",
-    "comments",
-    "sources",
-    "activity",
-    "chat",
-  ].forEach((k) => (s[k] = Array.isArray(s[k]) ? s[k] : d[k]));
-  s.goals = { ...d.goals, ...(s.goals || {}) };
-  s.analyticsHistory =
-    Array.isArray(s.analyticsHistory) && s.analyticsHistory.length
-      ? s.analyticsHistory
-      : d.analyticsHistory;
-  s.contents.forEach((c) => {
-    c.checks = {
-      research: false,
-      sources: false,
-      script: false,
-      voice: false,
-      visuals: false,
-      edit: false,
-      cover: false,
-      publish: false,
-      ...c.checks,
-    };
-    c.scenes = Array.isArray(c.scenes) ? c.scenes : [];
-    c.status = c.status === "Yayınlandı" ? "Paylaşıldı" : c.status;
+const saveLocal=()=>localStorage.setItem("studio90_state",JSON.stringify(state));
+const loadLocal=()=>{try{const d=JSON.parse(localStorage.getItem("studio90_state"));if(d)state=d}catch{}};
+function mergeList(remote=[],local=[],preferLocal=true){
+  const map=new Map();
+  [...remote,...local].forEach((item,index)=>{
+    if(!item?.id)return;
+    const old=map.get(item.id);
+    if(!old){map.set(item.id,item);return}
+    const oldTime=Date.parse(old.updatedAt||old.at||old.created_at||0),newTime=Date.parse(item.updatedAt||item.at||item.created_at||0);
+    if(newTime>oldTime||(newTime===oldTime&&((preferLocal&&index>=remote.length)||(!preferLocal&&index<remote.length))))map.set(item.id,item);
   });
-  s.version = 2;
-  return s;
+  return [...map.values()];
 }
-function actorName() {
-  return (
-    session?.user?.user_metadata?.name ||
-    session?.user?.email?.split("@")[0] ||
-    "Kullanıcı"
-  );
+function mergeStates(remote,local,preferLocal=true){
+  remote=remote&&Object.keys(remote).length?normalizeState(structuredClone(remote)):{ideas:[],contents:[],tasks:[],media:[],trash:[],comments:[],sources:[],activity:[],chat:[],deletedMedia:[],analyticsHistory:[],goals:{}};local=normalizeState(structuredClone(local||{}));
+  const merged={...remote,...local};
+  ["ideas","contents","tasks","media","trash","comments","sources","activity"].forEach(k=>merged[k]=mergeList(remote[k],local[k],preferLocal));
+  merged.chat=(preferLocal?local.chat:remote.chat)||[];
+  merged.analyticsHistory=mergeList(remote.analyticsHistory?.map((x,i)=>({...x,id:String(x.days||x.period||i)})),local.analyticsHistory?.map((x,i)=>({...x,id:String(x.days||x.period||i)})),preferLocal).map(({id,...x})=>x);
+  merged.goals={...remote.goals,...local.goals};merged.youtube={...remote.youtube,...local.youtube};
+  merged.deletedMedia=mergeList(remote.deletedMedia||[],local.deletedMedia||[],preferLocal);
+  const trashed=new Set(merged.trash.map(x=>x.id)),deletedMedia=new Set(merged.deletedMedia.map(x=>x.id));
+  merged.contents=merged.contents.filter(x=>!trashed.has(x.id));merged.media=merged.media.filter(x=>!deletedMedia.has(x.id));
+  merged.updatedAt=new Date(Math.max(Date.parse(remote.updatedAt||0),Date.parse(local.updatedAt||0),Date.now())).toISOString();
+  return normalizeState(merged);
 }
-function mutate(fn, msg, refId) {
-  fn();
-  state.activity.unshift({
-    id: uid(),
-    text: msg || "İçerik güncellendi",
-    actor: actorName(),
-    actorId: session?.user?.id,
-    refId,
-    at: new Date().toISOString(),
-  });
-  state.activity = state.activity.slice(0, 60);
-  sync();
-  render();
+async function sync(){
+  saveLocal();if(!session||!workspace||!online)return;clearTimeout(syncTimer);
+  syncTimer=setTimeout(async()=>{
+    const local=structuredClone(state);
+    const {data:row}=await sb.from("studio_workspace_state").select("data").eq("workspace_id",workspace.id).maybeSingle();
+    state=mergeStates(row?.data,local,true);saveLocal();
+    const {error}=await sb.from("studio_workspace_state").upsert({workspace_id:workspace.id,data:state,updated_by:session.user.id,updated_at:new Date().toISOString()},{onConflict:"workspace_id"});
+    if(error){console.warn(error);toast("Senkronizasyon başarısız: "+error.message)}
+  },600);
+}
+function normalizeState(s){
+  const d=baseState();s=s&&Object.keys(s).length?s:d;
+  ["ideas","contents","tasks","media","trash","comments","sources","activity","chat","deletedMedia"].forEach(k=>s[k]=Array.isArray(s[k])?s[k]:(d[k]||[]));
+  s.goals={...d.goals,...(s.goals||{})};s.analyticsHistory=Array.isArray(s.analyticsHistory)&&s.analyticsHistory.length?s.analyticsHistory:d.analyticsHistory;
+  s.contents.forEach(c=>{c.checks={research:false,sources:false,script:false,voice:false,visuals:false,edit:false,cover:false,publish:false,...c.checks};c.scenes=Array.isArray(c.scenes)?c.scenes:[];c.status=c.status==="Yayınlandı"?"Paylaşıldı":c.status});
+  s.version=3;return s;
+}
+function actorName(){return session?.user?.user_metadata?.name||session?.user?.email?.split("@")[0]||"Kullanıcı"}
+function mutate(fn,msg,refId){
+  fn();const now=new Date().toISOString();state.updatedAt=now;
+  if(refId){const item=state.contents.find(x=>x.id===refId);if(item)item.updatedAt=now}
+  state.activity.unshift({id:uid(),text:msg||"İçerik güncellendi",actor:actorName(),actorId:session?.user?.id,refId,at:now,updatedAt:now});
+  state.activity=state.activity.slice(0,60);sync();render();
 }
 
 window.addEventListener("online", () => {
@@ -580,7 +545,7 @@ function detail() {
     )
     .join(
       "",
-    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div>${c.scenes.map((s) => `<article class="card scene"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><b>${escape(s.title)}</b><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.time)} • ${escape(s.narration)}</p><div class="prompt"><b>Grok Promptu</b><br>${escape(s.prompt)}</div><div class="row"><button class="link scenePhoto" data-scene="${s.id}">📷 Fotoğraf</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map((m) => `<div class="media" style="background-image:url('${m.url}');background-size:cover"></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
+    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div>${c.scenes.map((s) => `<article class="card scene"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><b>${escape(s.title)}</b><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.time)} • ${escape(s.narration)}</p><div class="prompt"><b>Grok Promptu</b><br>${escape(s.prompt)}</div><div class="row"><button class="link scenePhoto" data-scene="${s.id}">📷 Fotoğraf</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map(m=>`<div class="media">${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
   shell(body, "İçerik Detayı", true);
   document
     .querySelectorAll("[data-check]")
@@ -694,46 +659,19 @@ function calendar() {
   $("#newTask").onclick = taskForm;
   icons();
 }
-function media() {
-  const body = `<div class="row"><div class="field" style="flex:1;margin:0"><input id="mediaSearch" placeholder="Medya ara..."></div><button class="iconbtn" style="background:var(--navy)" id="upload"><i data-lucide="upload"></i></button></div><div class="tabs" style="margin-top:12px"><button class="tab active" data-kind="all">Tümü</button><button class="tab" data-kind="image">Görsel</button><button class="tab" data-kind="video">Video</button><button class="tab" data-kind="audio">Ses</button></div><div class="sectionhead"><h2>Medya Arşivi</h2><span class="muted">${state.media.length} dosya</span></div><div class="mediaGrid" id="mediaGrid">${state.media.map((m) => `<div class="media ${m.type?.startsWith("video") ? "video" : ""}" data-media="${m.id}" data-type="${escape(m.type)}" style="${m.url ? `background-image:url('${m.url}');background-size:cover` : ""}"><button class="mediaDelete" data-delete="${m.id}">×</button>${m.url ? "" : "📁"}</div>`).join("") || '<div class="empty">İlk dosyanı yükle.</div>'}</div><div class="card" style="margin-top:15px"><div class="row between"><b>Bulut arşivi</b><span class="muted">${state.media.length} dosya • cihazlar arası ortak</span></div><div class="progress"><i style="width:${Math.min(90, state.media.length)}%"></i></div></div><input hidden type="file" id="fileInput" accept="image/*,video/*,audio/*" multiple>`;
-  shell(body, "Medya Arşivi");
-  $("#upload").onclick = () => $("#fileInput").click();
-  $("#fileInput").onchange = (e) => uploadFiles([...e.target.files]);
-  $("#mediaSearch").oninput = (e) =>
-    document.querySelectorAll("[data-media]").forEach(
-      (x) =>
-        (x.style.display = state.media
-          .find((m) => m.id === x.dataset.media)
-          ?.name.toLowerCase()
-          .includes(e.target.value.toLowerCase())
-          ? ""
-          : "none"),
-    );
-  document
-    .querySelectorAll("[data-kind]")
-    .forEach(
-      (x) =>
-        (x.onclick = () =>
-          document
-            .querySelectorAll("[data-media]")
-            .forEach(
-              (m) =>
-                (m.style.display =
-                  x.dataset.kind === "all" ||
-                  m.dataset.type.startsWith(x.dataset.kind)
-                    ? ""
-                    : "none"),
-            )),
-    );
-  document.querySelectorAll("[data-delete]").forEach(
-    (x) =>
-      (x.onclick = (e) => {
-        e.stopPropagation();
-        deleteMedia(x.dataset.delete);
-      }),
-  );
-  icons();
+function mediaPreview(m){
+  if(m.type?.startsWith("video"))return `<video src="${m.url}" controls preload="metadata"></video>`;
+  if(m.type?.startsWith("audio"))return `<div class="audioTile">🎙️<audio src="${m.url}" controls></audio></div>`;
+  return m.url?`<img src="${m.url}" alt="${escape(m.name)}" loading="lazy">`:"📁";
 }
+function media(){
+  const body=`<div class="row"><div class="field" style="flex:1;margin:0"><input id="mediaSearch" placeholder="Medya ara..."></div><button class="iconbtn" style="background:var(--navy)" id="upload"><i data-lucide="upload"></i></button></div><div class="tabs mediaKinds" style="margin-top:12px"><button class="tab active" data-kind="all">Tümü</button><button class="tab" data-kind="image">Görsel</button><button class="tab" data-kind="video">Video</button><button class="tab" data-kind="audio">Ses</button></div><div class="sectionhead"><h2>Medya Arşivi</h2><span class="muted">${state.media.length} dosya</span></div><div class="mediaGrid" id="mediaGrid">${state.media.map(m=>`<div class="media ${m.type?.startsWith("video")?"video":""}" data-media="${m.id}" data-type="${escape(m.type)}"><button class="mediaDelete" data-delete="${m.id}">×</button>${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")||'<div class="empty">İlk dosyanı yükle.</div>'}</div><div class="card" style="margin-top:15px"><div class="row between"><b>Bulut arşivi</b><span class="muted">${state.media.length} dosya • cihazlar arası ortak</span></div><div class="progress"><i style="width:${Math.min(90,state.media.length)}%"></i></div></div><input hidden type="file" id="fileInput" accept="image/*,video/*,audio/*,.heic,.heif" multiple>`;
+  shell(body,"Medya Arşivi");$("#upload").onclick=()=>$("#fileInput").click();$("#fileInput").onchange=e=>uploadFiles([...e.target.files]);
+  $("#mediaSearch").oninput=e=>document.querySelectorAll("[data-media]").forEach(x=>x.style.display=state.media.find(m=>m.id===x.dataset.media)?.name.toLowerCase().includes(e.target.value.toLowerCase())?"":"none");
+  document.querySelectorAll("[data-kind]").forEach(x=>x.onclick=()=>{document.querySelectorAll("[data-kind]").forEach(t=>t.classList.toggle("active",t===x));document.querySelectorAll("[data-media]").forEach(m=>m.style.display=x.dataset.kind==="all"||m.dataset.type.startsWith(x.dataset.kind)?"":"none")});
+  document.querySelectorAll("[data-delete]").forEach(x=>x.onclick=e=>{e.stopPropagation();deleteMedia(x.dataset.delete)});icons();
+}
+
 async function uploadFiles(files, meta = {}) {
   if (!files?.length || !session || !workspace)
     return toast("Önce çalışma alanına giriş yapmalısın");
@@ -765,37 +703,46 @@ async function uploadFiles(files, meta = {}) {
     if (meta.sceneId) {
       const c = state.contents.find((x) => x.id === meta.contentId);
       const s = c?.scenes.find((x) => x.id === meta.sceneId);
-      if (s) s.imageUrl = item.url;
+      if (s) { s.imageMediaId = item.id; s.imageUrl = item.url; }
     } else if (
       meta.contentId &&
       file.type.startsWith("image") &&
       !state.contents.find((x) => x.id === meta.contentId)?.coverUrl
     ) {
-      state.contents.find((x) => x.id === meta.contentId).coverUrl = item.url;
+      const target=state.contents.find((x) => x.id === meta.contentId); target.coverMediaId=item.id; target.coverUrl=item.url;
     }
     ok++;
   }
   mutate(() => {}, `${ok} dosya arşive eklendi`, meta.contentId);
   toast(`${ok} dosya başarıyla yüklendi`);
 }
-async function deleteMedia(id) {
-  const m = state.media.find((x) => x.id === id);
-  if (!m) return;
-  const { error } = await sb.storage.from("studio-media").remove([m.path]);
-  if (error) return toast(error.message);
-  mutate(
-    () => (state.media = state.media.filter((x) => x.id !== id)),
-    `${m.name} arşivden silindi`,
-  );
+async function deleteMedia(id){
+  const m=state.media.find(x=>x.id===id);if(!m)return;
+  const {error}=await sb.storage.from("studio-media").remove([m.path]);if(error)return toast(error.message);
+  mutate(()=>{
+    state.deletedMedia=state.deletedMedia||[];state.deletedMedia.push({id:m.id,path:m.path,deletedAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+    state.media=state.media.filter(x=>x.id!==id);
+    state.contents.forEach(c=>{if(c.coverMediaId===id){delete c.coverMediaId;delete c.coverUrl}(c.scenes||[]).forEach(s=>{if(s.imageMediaId===id){delete s.imageMediaId;delete s.imageUrl}})});
+  },`${m.name} arşivden ve bağlı içeriklerden silindi`);
 }
-function analytics() {
-  const h=state.analyticsHistory,cur=h[h.length-1],prev=h[h.length-2]||cur,pct=(a,b)=>b?Math.round((a-b)/b*100):0;
-  const body = `<div class="tabs"><button class="tab">7 Gün</button><button class="tab active">28 Gün</button><button class="tab">90 Gün</button><button class="tab">1 Yıl</button></div><div class="grid3" style="grid-template-columns:repeat(2,1fr)">${[['İzlenme',cur.views,pct(cur.views,prev.views)],['Abone',cur.subs,pct(cur.subs,prev.subs)],['İzlenme süresi',cur.hours+' sa',pct(cur.hours,prev.hours)],['CTR','%'+cur.ctr,pct(cur.ctr,prev.ctr)]].map(a=>`<div class="metric"><small>${a[0]}</small><b>${Number.isFinite(a[1])?Number(a[1]).toLocaleString('tr-TR'):a[1]}</b><span class="trend ${a[2]<0?'down':''}">${a[2]>=0?'↑':'↓'} %${Math.abs(a[2])}</span></div>`).join('')}</div><div class="card"><div class="row between"><h2>Haftalık / aylık kıyas</h2><span class="badge">${escape(cur.period)}</span></div><div class="chart"><svg viewBox="0 0 400 150" preserveAspectRatio="none"><polyline points="0,125 45,110 85,116 125,80 170,96 210,62 255,75 300,40 345,55 400,18" fill="none" stroke="#24e37a" stroke-width="6"/><polyline points="0,150 0,125 45,110 85,116 125,80 170,96 210,62 255,75 300,40 345,55 400,18 400,150" fill="#24e37a22"/></svg></div><div class="compare"><span>İzleyici tutma <b>%${cur.retention}</b></span><span>Önceki dönem <b>%${prev.retention}</b></span></div></div><div class="card"><div class="sectionhead"><h2>Aylık hedefler</h2><button class="link" id="editGoals">Düzenle</button></div>${[['Abone',cur.subs,state.goals.subscribers],['İzlenme',cur.views,state.goals.views],['Uzun video',state.contents.filter(c=>c.type==='Uzun Video'&&c.status==='Paylaşıldı').length,state.goals.longVideos],['Shorts',state.contents.filter(c=>c.type==='Shorts'&&c.status==='Paylaşıldı').length,state.goals.shorts]].map(g=>`<div class="goal"><div class="row between"><b>${g[0]}</b><span>${g[1].toLocaleString('tr-TR')} / ${g[2].toLocaleString('tr-TR')}</span></div><div class="progress"><i style="width:${Math.min(100,g[1]/g[2]*100)}%"></i></div></div>`).join('')}</div><div class="card insight"><span class="badge">✨ AI YORUMU</span><h2>Hikâye içeriklerine ağırlık ver</h2><p>İzlenme süresi önceki döneme göre %${pct(cur.hours,prev.hours)} arttı. En güçlü büyüme için uzun videodan en az 3 Shorts üret.</p><div class="row"><button class="secondary" id="addStats">Veri gir</button><button class="secondary" id="youtubeConnect"><i data-lucide="youtube"></i> YouTube bağla</button></div></div>`;
-  shell(body, "Kanal Analizi");
-  $("#addStats").onclick = statsForm;
-  $("#editGoals").onclick = goalsForm;
-  $("#youtubeConnect").onclick = ()=>toast('YouTube bağlantısı için Google OAuth istemci bilgisi eklendiğinde gerçek veriler otomatik alınacak.');
-  icons();
+
+let analyticsPeriod=28;
+function periodLabel(days){return days===7?"Son 7 gün":days===28?"Son 28 gün":days===90?"Son 90 gün":"Son 1 yıl"}
+function analyticsRecord(days){
+  const found=state.analyticsHistory.find(x=>Number(x.days)===days||x.period===periodLabel(days));
+  if(found)return found;
+  const base=state.analyticsHistory[state.analyticsHistory.length-1]||{views:0,subs:0,hours:0,ctr:0,retention:0};
+  const scale=days/28;
+  return {period:periodLabel(days),days,views:Math.round((+base.views||0)*scale),subs:Math.round((+base.subs||0)*scale),hours:Math.round((+base.hours||0)*scale),ctr:+base.ctr||0,retention:+base.retention||0};
+}
+function analytics(){
+  const cur=analyticsRecord(analyticsPeriod),prev=analyticsRecord(analyticsPeriod===7?28:analyticsPeriod===28?7:28),pct=(a,b)=>b?Math.round((a-b)/b*100):0;
+  const metrics=[["İzlenme",cur.views,pct(cur.views,prev.views)],["Abone",cur.subs,pct(cur.subs,prev.subs)],["İzlenme süresi",cur.hours+" sa",pct(cur.hours,prev.hours)],["CTR","%"+cur.ctr,pct(cur.ctr,prev.ctr)]];
+  const publishedLong=state.contents.filter(c=>c.type==="Uzun Video"&&c.status==="Paylaşıldı").length,publishedShorts=state.contents.filter(c=>c.type==="Shorts"&&c.status==="Paylaşıldı").length;
+  const body=`<div class="tabs periodTabs">${[7,28,90,365].map(d=>`<button class="tab ${analyticsPeriod===d?"active":""}" data-period="${d}">${d===365?"1 Yıl":d+" Gün"}</button>`).join("")}</div><div class="grid3" style="grid-template-columns:repeat(2,1fr)">${metrics.map(a=>`<div class="metric"><small>${a[0]}</small><b>${Number.isFinite(a[1])?Number(a[1]).toLocaleString("tr-TR"):a[1]}</b><span class="trend ${a[2]<0?"down":""}">${a[2]>=0?"↑":"↓"} %${Math.abs(a[2])}</span></div>`).join("")}</div><div class="card"><div class="row between"><h2>Dönem kıyası</h2><span class="badge">${escape(cur.period)}</span></div><div class="chart"><svg viewBox="0 0 400 150" preserveAspectRatio="none"><polyline points="0,125 45,110 85,116 125,80 170,96 210,62 255,75 300,40 345,55 400,18" fill="none" stroke="#24e37a" stroke-width="6"/></svg></div><div class="compare"><span>İzleyici tutma <b>%${cur.retention}</b></span><span>Önceki dönem <b>%${prev.retention}</b></span></div></div><div class="card"><div class="sectionhead"><h2>Aylık hedefler</h2><button class="link" id="editGoals">Düzenle</button></div>${[["Abone",cur.subs,state.goals.subscribers],["İzlenme",cur.views,state.goals.views],["Uzun video",publishedLong,state.goals.longVideos],["Shorts",publishedShorts,state.goals.shorts]].map(g=>`<div class="goal"><div class="row between"><b>${g[0]}</b><span>${(+g[1]).toLocaleString("tr-TR")} / ${(+g[2]).toLocaleString("tr-TR")}</span></div><div class="progress"><i style="width:${Math.min(100,(+g[1])/(+g[2]||1)*100)}%"></i></div></div>`).join("")}</div><div class="card insight"><span class="badge">✨ AI YORUMU</span><h2>${pct(cur.hours,prev.hours)>=0?"Büyüme devam ediyor":"Yeni format denemesi gerekli"}</h2><p>İzlenme süresi karşılaştırılan döneme göre %${Math.abs(pct(cur.hours,prev.hours))} ${pct(cur.hours,prev.hours)>=0?"arttı":"azaldı"}. Uzun videodan en az 3 Shorts üret.</p><div class="row"><button class="secondary" id="addStats">Veri gir</button><button class="secondary" id="youtubeImport"><i data-lucide="youtube"></i> YouTube verisi</button></div></div>`;
+  shell(body,"Kanal Analizi");
+  document.querySelectorAll("[data-period]").forEach(x=>x.onclick=()=>{analyticsPeriod=+x.dataset.period;render()});
+  $("#addStats").onclick=statsForm;$("#editGoals").onclick=goalsForm;$("#youtubeImport").onclick=youtubeImportForm;icons();
 }
 
 function quickSheet() {
@@ -906,24 +853,27 @@ function sceneForm(c) {
     closeSheet();
   };
 }
-function statsForm() {
-  sheet(
-    `<h2>Kanal Verileri</h2><form id="statsForm">${state.analytics.map((a, i) => `<div class="field"><label>${escape(a.label)}</label><input name="v${i}" value="${escape(a.value)}"></div>`).join("")}<button class="primary">Kaydet</button></form>`,
-  );
-  $("#statsForm").onsubmit = (e) => {
-    e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.target));
-    mutate(
-      () => state.analytics.forEach((a, i) => (a.value = d["v" + i])),
-      "Kanal analizi güncellendi",
-    );
-    closeSheet();
-  };
+function statsForm(){
+  const cur=analyticsRecord(analyticsPeriod);
+  sheet(`<h2>${periodLabel(analyticsPeriod)} verileri</h2><form id="statsForm"><div class="form2"><div class="field"><label>İzlenme</label><input name="views" type="number" min="0" value="${cur.views}"></div><div class="field"><label>Abone</label><input name="subs" type="number" min="0" value="${cur.subs}"></div></div><div class="form2"><div class="field"><label>İzlenme saati</label><input name="hours" type="number" step="0.1" min="0" value="${cur.hours}"></div><div class="field"><label>CTR (%)</label><input name="ctr" type="number" step="0.1" min="0" value="${cur.ctr}"></div></div><div class="field"><label>Ortalama izleyici tutma (%)</label><input name="retention" type="number" step="0.1" min="0" max="100" value="${cur.retention}"></div><button class="primary">Analize Kaydet</button></form>`);
+  $("#statsForm").onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target)),record={period:periodLabel(analyticsPeriod),days:analyticsPeriod,views:+d.views,subs:+d.subs,hours:+d.hours,ctr:+d.ctr,retention:+d.retention,updatedAt:new Date().toISOString()};mutate(()=>{const i=state.analyticsHistory.findIndex(x=>Number(x.days)===analyticsPeriod||x.period===record.period);if(i>=0)state.analyticsHistory[i]=record;else state.analyticsHistory.push(record)},"Kanal analizi güncellendi");closeSheet()};
 }
+function youtubeImportForm(){
+  const cur=analyticsRecord(analyticsPeriod);
+  sheet(`<div class="row between"><div><h2 style="margin:0">YouTube Studio Verisi</h2><div class="muted">YouTube Studio → Analytics ekranındaki değerleri gir</div></div><span class="badge">İÇE AKTAR</span></div><div class="notice">Google OAuth bağlanana kadar en güvenli yöntem budur. Kaydettiğin değerler dönem kartlarına ve kıyaslamaya anında yansır.</div><form id="youtubeForm"><div class="field"><label>Kanal / video bağlantısı</label><input name="channelUrl" type="url" value="${escape(state.youtube?.channelUrl||"")}" placeholder="https://youtube.com/@..."></div><div class="form2"><div class="field"><label>İzlenme</label><input name="views" type="number" value="${cur.views}"></div><div class="field"><label>Abone</label><input name="subs" type="number" value="${cur.subs}"></div></div><div class="form2"><div class="field"><label>İzlenme saati</label><input name="hours" type="number" step="0.1" value="${cur.hours}"></div><div class="field"><label>CTR (%)</label><input name="ctr" type="number" step="0.1" value="${cur.ctr}"></div></div><div class="field"><label>İzleyici tutma (%)</label><input name="retention" type="number" step="0.1" value="${cur.retention}"></div><button class="primary">YouTube Verisini Kaydet</button></form>`);
+  $("#youtubeForm").onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target)),record={period:periodLabel(analyticsPeriod),days:analyticsPeriod,views:+d.views,subs:+d.subs,hours:+d.hours,ctr:+d.ctr,retention:+d.retention,updatedAt:new Date().toISOString()};mutate(()=>{state.youtube={...(state.youtube||{}),channelUrl:d.channelUrl,lastImport:new Date().toISOString()};const i=state.analyticsHistory.findIndex(x=>Number(x.days)===analyticsPeriod||x.period===record.period);if(i>=0)state.analyticsHistory[i]=record;else state.analyticsHistory.push(record)},"YouTube Studio verileri içe aktarıldı");closeSheet()};
+}
+
 function sourceForm(c){sheet(`<h2>Kaynak Ekle</h2><form id="sourceForm"><div class="field"><label>Kaynak başlığı</label><input name="title" required></div><div class="field"><label>Bağlantı</label><input name="url" type="url" placeholder="https://" required></div><label class="row"><input name="verified" type="checkbox"> Bilgiler doğrulandı</label><button class="primary">Kaydet</button></form>`);$('#sourceForm').onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);mutate(()=>state.sources.push({id:uid(),contentId:c.id,title:f.get('title'),url:f.get('url'),verified:f.has('verified'),actor:actorName(),at:new Date().toISOString()}),`${c.title} için kaynak eklendi`,c.id);closeSheet()}}
 function goalsForm(){sheet(`<h2>Aylık Hedefler</h2><form id="goalsForm"><div class="field"><label>Abone hedefi</label><input name="subscribers" type="number" value="${state.goals.subscribers}"></div><div class="field"><label>İzlenme hedefi</label><input name="views" type="number" value="${state.goals.views}"></div><div class="form2"><div class="field"><label>Uzun video</label><input name="longVideos" type="number" value="${state.goals.longVideos}"></div><div class="field"><label>Shorts</label><input name="shorts" type="number" value="${state.goals.shorts}"></div></div><button class="primary">Hedefleri Kaydet</button></form>`);$('#goalsForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));mutate(()=>Object.keys(d).forEach(k=>state.goals[k]=+d[k]),'Kanal hedefleri güncellendi');closeSheet()}}
 function settingsSheet(){sheet(`<div class="row between"><div><h2 style="margin:0">Ayarlar</h2><div class="muted">${escape(session?.user?.email||'')}</div></div><span class="badge">Ekip</span></div><div class="card"><b>Çalışma alanı kodu</b><div class="row between"><code>${escape(workspace?.join_code||'—')}</code><button class="link" id="copyCode"><i data-lucide="copy"></i> Kopyala</button></div></div><div class="sectionhead"><h2>Çöp kutusu</h2><span class="muted">${state.trash.length} içerik</span></div>${state.trash.map(c=>`<div class="card row between"><div><b>${escape(c.title)}</b><div class="muted">${new Date(c.deletedAt).toLocaleDateString('tr-TR')}</div></div><div class="row"><button class="iconbtn restore" data-restore="${c.id}" style="background:#e7f8ee;color:#076a34"><i data-lucide="rotate-ccw"></i></button><button class="iconbtn permanent" data-permanent="${c.id}" style="background:#ffe9e5;color:#b52b1e"><i data-lucide="trash-2"></i></button></div></div>`).join('')||'<div class="empty">Çöp kutusu boş.</div>'}<button class="secondary" style="width:100%;margin-bottom:8px" id="changePassword">Şifre yenileme bağlantısı gönder</button><button class="secondary danger" style="width:100%" id="logoutSettings">Çıkış Yap</button>`);$('#copyCode').onclick=()=>navigator.clipboard?.writeText(workspace?.join_code||'').then(()=>toast('Ekip kodu kopyalandı'));document.querySelectorAll('[data-restore]').forEach(x=>x.onclick=()=>{const c=state.trash.find(t=>t.id===x.dataset.restore);mutate(()=>{state.contents.unshift({...c,status:'Planlandı'});state.trash=state.trash.filter(t=>t.id!==c.id)},`${c.title} geri yüklendi`,c.id);closeSheet()});document.querySelectorAll('[data-permanent]').forEach(x=>x.onclick=()=>{mutate(()=>state.trash=state.trash.filter(t=>t.id!==x.dataset.permanent),'İçerik kalıcı silindi');closeSheet()});$('#changePassword').onclick=async()=>{const {error}=await sb.auth.resetPasswordForEmail(session.user.email,{redirectTo:RESET_REDIRECT});toast(error?error.message:'Yenileme e-postası gönderildi')};$('#logoutSettings').onclick=()=>sb.auth.signOut();icons()}
-function aiProjectForm(){sheet(`<div class="row between"><div><h2 style="margin:0">✨ AI Proje Sihirbazı</h2><div class="muted">Tek konudan tam üretim paketi</div></div><span class="badge">GROK</span></div><form id="aiProjectForm"><div class="field"><label>Video konusu</label><input name="topic" placeholder="Örn. Adriano'nun yükselişi ve düşüşü" required></div><div class="form2"><div class="field"><label>Tür</label><select name="type"><option>Uzun Video</option><option>Shorts</option></select></div><div class="field"><label>Ton</label><select name="tone"><option>Sinematik</option><option>Hızlı ve vurucu</option><option>Belgesel</option><option>Tartışmalı</option></select></div></div><label class="row"><input name="shorts" type="checkbox" checked> Uzun videodan 3 Shorts fikri üret</label><button class="primary" id="generateProject">Projeyi Oluştur</button><p id="projectMsg" class="muted"></p></form>`);$('#aiProjectForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),topic=f.get('topic'),type=f.get('type');$('#projectMsg').textContent='Senaryo, sahneler ve Grok komutları hazırlanıyor…';const prompt=`${topic} konusunda ${type} için Türkçe bir üretim paketi oluştur. Yalnız geçerli JSON döndür: {"title":"","hook":"","description":"","script":"","scenes":[{"title":"","time":"","narration":"","prompt":""}],"shorts":[{"title":"","hook":""}],"descriptionText":"","hashtags":""}. Ton: ${f.get('tone')}. Bilgi uydurma, doğrulanması gereken yerleri belirt.`;try{const {data,error}=await sb.functions.invoke('studio-ai',{body:{workspaceId:workspace.id,message:prompt,history:[],context:{channel:state.channel}}});if(error)throw error;const raw=data?.text||'',json=JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0]||raw),id=uid();mutate(()=>{state.contents.unshift({id,title:json.title||topic,type,series:'Ne Oldu Bu Adama?',status:'Planlandı',progress:0,due:iso(new Date(today.getTime()+7*864e5)),owner:'Ortak',priority:'Yüksek',hook:json.hook||'',description:json.description||'',script:json.script||'',youtubeDescription:json.descriptionText||'',hashtags:json.hashtags||'',checks:{research:false,sources:false,script:!!json.script,voice:false,visuals:false,edit:false,cover:false,publish:false},scenes:(json.scenes||[]).map((s,i)=>({id:uid(),no:i+1,status:'Eksik',...s}))});(json.shorts||[]).forEach(s=>state.ideas.unshift({id:uid(),title:s.title,series:'Uzun Videodan Shorts',score:9,note:s.hook}))},`${topic} AI ile projelendirildi`,id);closeSheet();sub=id;page='detail';render()}catch(err){$('#projectMsg').textContent='AI yanıtı işlenemedi. API anahtarını ve Edge Function ayarını kontrol et.'}}}
+function aiProjectForm(){sheet(`<div class="row between"><div><h2 style="margin:0">✨ AI Proje Sihirbazı</h2><div class="muted">Tek konudan tam üretim paketi</div></div><span class="badge">GROK</span></div><form id="aiProjectForm"><div class="field"><label>Video konusu</label><input name="topic" placeholder="Örn. Adriano'nun yükselişi ve düşüşü" required></div><div class="form2"><div class="field"><label>Tür</label><select name="type"><option>Uzun Video</option><option>Shorts</option></select></div><div class="field"><label>Ton</label><select name="tone"><option>Sinematik</option><option>Hızlı ve vurucu</option><option>Belgesel</option><option>Tartışmalı</option></select></div></div><label class="row"><input name="shorts" type="checkbox" checked> Uzun videodan 3 Shorts fikri üret</label><button class="primary" id="generateProject">Projeyi Oluştur</button><p id="projectMsg" class="muted"></p></form>`);$('#aiProjectForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),topic=f.get('topic'),type=f.get('type');$('#projectMsg').textContent='Senaryo, sahneler ve Grok komutları hazırlanıyor…';const prompt=`${topic} konusunda ${type} için Türkçe bir üretim paketi oluştur. Yalnız geçerli JSON döndür: {"title":"","hook":"","description":"","script":"","scenes":[{"title":"","time":"","narration":"","prompt":""}],"shorts":[{"title":"","hook":""}],"descriptionText":"","hashtags":""}. Ton: ${f.get('tone')}. Bilgi uydurma, doğrulanması gereken yerleri belirt.`;try{const {data,error}=await sb.functions.invoke('studio-ai',{body:{workspaceId:workspace.id,message:prompt,history:[],context:{channel:state.channel}}});if(error)throw error;const raw=data?.text||'',json=JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0]||raw),id=uid();mutate(()=>{state.contents.unshift({id,title:json.title||topic,type,series:'Ne Oldu Bu Adama?',status:'Planlandı',progress:0,due:iso(new Date(today.getTime()+7*864e5)),owner:'Ortak',priority:'Yüksek',hook:json.hook||'',description:json.description||'',script:json.script||'',youtubeDescription:json.descriptionText||'',hashtags:json.hashtags||'',checks:{research:false,sources:false,script:!!json.script,voice:false,visuals:false,edit:false,cover:false,publish:false},scenes:(json.scenes||[]).map((s,i)=>({id:uid(),no:i+1,status:'Eksik',...s}))});(json.shorts||[]).forEach(s=>state.ideas.unshift({id:uid(),title:s.title,series:'Uzun Videodan Shorts',score:9,note:s.hook}))},`${topic} AI ile projelendirildi`,id);closeSheet();sub=id;page='detail';render()}catch(err){$('#projectMsg').textContent='AI hatası: '+(err?.message||'Yanıt işlenemedi. API anahtarını kontrol et.')}}}
+async function testAIConnection(){
+  const btn=$("#testAI");if(btn){btn.disabled=true;btn.textContent="Test ediliyor…"}
+  try{const {data,error}=await sb.functions.invoke("studio-ai",{body:{workspaceId:workspace.id,message:"Yalnızca TAMAM yaz.",history:[],context:{test:true}}});if(error)throw error;toast(data?.text?"AI bağlantısı çalışıyor.":"AI boş yanıt verdi.");}
+  catch(err){toast("AI bağlantı hatası: "+(err?.message||"Bilinmeyen hata"))}
+  finally{if(btn){btn.disabled=false;btn.textContent="Bağlantıyı test et"}}
+}
 function openAI(contextId) {
   const c = contextId ? state.contents.find((x) => x.id === contextId) : null;
   sheet(
@@ -932,7 +882,7 @@ function openAI(contextId) {
       .map((m) => `<div class="aiBubble ${m.role}">${escape(m.text)}</div>`)
       .join(
         "",
-      )}</div><div class="tabs"><button class="tab aiPrompt">Senaryo yaz</button><button class="tab aiPrompt">Shorts çıkar</button><button class="tab aiPrompt">Grok promptu</button></div><form class="aiInput" id="aiForm"><input name="message" placeholder="90+ AI’a bir şey sor…" required><button class="iconbtn" style="background:var(--green);color:#062719"><i data-lucide="send"></i></button></form>`,
+      )}</div><div class="tabs"><button class="tab aiPrompt">Senaryo yaz</button><button class="tab aiPrompt">Shorts çıkar</button><button class="tab aiPrompt">Grok promptu</button><button class="tab" id="testAI">Bağlantıyı test et</button></div><form class="aiInput" id="aiForm"><input name="message" placeholder="90+ AI’a bir şey sor…" required><button class="iconbtn" style="background:var(--green);color:#062719"><i data-lucide="send"></i></button></form>`,
   );
   $(".aiPrompt") &&
     document.querySelectorAll(".aiPrompt").forEach(
@@ -941,6 +891,7 @@ function openAI(contextId) {
           $("#aiForm input").value = x.textContent + (c ? " — " + c.title : "");
         }),
     );
+  $("#testAI").onclick=testAIConnection;
   $("#aiForm").onsubmit = async (e) => {
     e.preventDefault();
     const input = e.target.message,
@@ -976,7 +927,7 @@ function openAI(contextId) {
       sync();
     } catch (err) {
       $("#thinking").textContent =
-        "Grok anahtarı henüz eklenmedi veya bağlantı kurulamadı. Altyapı hazır; anahtar eklendiğinde çalışacak.";
+        "AI bağlantı hatası: "+(err?.message||"Edge Function veya Grok anahtarı kontrol edilmeli.");
     }
   };
   icons();
@@ -1141,7 +1092,7 @@ async function loadWorkspace() {
         },
         (p) => {
           if (p.new.updated_by !== session.user.id) {
-            state = normalizeState(p.new.data);
+            state = mergeStates(state,p.new.data,false);
             saveLocal();
             refreshMediaUrls().then(render);
             toast("Ortak çalışma alanı güncellendi");
@@ -1151,18 +1102,18 @@ async function loadWorkspace() {
       .subscribe();
   }
 }
-async function refreshMediaUrls() {
-  if (!state.media?.length) return;
-  await Promise.all(
-    state.media.map(async (m) => {
-      if (!m.path) return;
-      const { data } = await sb.storage
-        .from("studio-media")
-        .createSignedUrl(m.path, 60 * 60 * 24 * 7);
-      if (data?.signedUrl) m.url = data.signedUrl;
-    }),
-  );
+async function refreshMediaUrls(){
+  if(!state.media?.length)return;
+  const previous=new Map(state.media.map(m=>[m.id,m.url]));
+  await Promise.all(state.media.map(async m=>{if(!m.path)return;const {data}=await sb.storage.from("studio-media").createSignedUrl(m.path,60*60*24);if(data?.signedUrl)m.url=data.signedUrl}));
+  state.contents.forEach(c=>{
+    if(c.coverMediaId){const m=state.media.find(x=>x.id===c.coverMediaId);if(m)c.coverUrl=m.url}
+    else if(c.coverUrl){const m=state.media.find(x=>previous.get(x.id)===c.coverUrl);if(m){c.coverMediaId=m.id;c.coverUrl=m.url}}
+    (c.scenes||[]).forEach(s=>{if(s.imageMediaId){const m=state.media.find(x=>x.id===s.imageMediaId);if(m)s.imageUrl=m.url}else if(s.imageUrl){const m=state.media.find(x=>previous.get(x.id)===s.imageUrl);if(m){s.imageMediaId=m.id;s.imageUrl=m.url}}});
+  });
+  saveLocal();
 }
+
 async function boot() {
   if (recoveryMode) return resetPasswordScreen();
   const { data } = await sb.auth.getSession();
