@@ -242,8 +242,10 @@ let session = null,
   sub = null,
   online = navigator.onLine,
   syncTimer,
-  recoveryMode = false;
+  recoveryMode = false,
+  youtubeSyncing = false;
 const RESET_REDIRECT = "studio90://reset-password";
+const YOUTUBE_REDIRECT = "studio90://youtube-connected";
 
 const toast = (m) => {
   document.body.insertAdjacentHTML(
@@ -739,10 +741,60 @@ function analytics(){
   const cur=analyticsRecord(analyticsPeriod),prev=analyticsRecord(analyticsPeriod===7?28:analyticsPeriod===28?7:28),pct=(a,b)=>b?Math.round((a-b)/b*100):0;
   const metrics=[["İzlenme",cur.views,pct(cur.views,prev.views)],["Abone",cur.subs,pct(cur.subs,prev.subs)],["İzlenme süresi",cur.hours+" sa",pct(cur.hours,prev.hours)],["CTR","%"+cur.ctr,pct(cur.ctr,prev.ctr)]];
   const publishedLong=state.contents.filter(c=>c.type==="Uzun Video"&&c.status==="Paylaşıldı").length,publishedShorts=state.contents.filter(c=>c.type==="Shorts"&&c.status==="Paylaşıldı").length;
-  const body=`<div class="tabs periodTabs">${[7,28,90,365].map(d=>`<button class="tab ${analyticsPeriod===d?"active":""}" data-period="${d}">${d===365?"1 Yıl":d+" Gün"}</button>`).join("")}</div><div class="grid3" style="grid-template-columns:repeat(2,1fr)">${metrics.map(a=>`<div class="metric"><small>${a[0]}</small><b>${Number.isFinite(a[1])?Number(a[1]).toLocaleString("tr-TR"):a[1]}</b><span class="trend ${a[2]<0?"down":""}">${a[2]>=0?"↑":"↓"} %${Math.abs(a[2])}</span></div>`).join("")}</div><div class="card"><div class="row between"><h2>Dönem kıyası</h2><span class="badge">${escape(cur.period)}</span></div><div class="chart"><svg viewBox="0 0 400 150" preserveAspectRatio="none"><polyline points="0,125 45,110 85,116 125,80 170,96 210,62 255,75 300,40 345,55 400,18" fill="none" stroke="#24e37a" stroke-width="6"/></svg></div><div class="compare"><span>İzleyici tutma <b>%${cur.retention}</b></span><span>Önceki dönem <b>%${prev.retention}</b></span></div></div><div class="card"><div class="sectionhead"><h2>Aylık hedefler</h2><button class="link" id="editGoals">Düzenle</button></div>${[["Abone",cur.subs,state.goals.subscribers],["İzlenme",cur.views,state.goals.views],["Uzun video",publishedLong,state.goals.longVideos],["Shorts",publishedShorts,state.goals.shorts]].map(g=>`<div class="goal"><div class="row between"><b>${g[0]}</b><span>${(+g[1]).toLocaleString("tr-TR")} / ${(+g[2]).toLocaleString("tr-TR")}</span></div><div class="progress"><i style="width:${Math.min(100,(+g[1])/(+g[2]||1)*100)}%"></i></div></div>`).join("")}</div><div class="card insight"><span class="badge">✨ AI YORUMU</span><h2>${pct(cur.hours,prev.hours)>=0?"Büyüme devam ediyor":"Yeni format denemesi gerekli"}</h2><p>İzlenme süresi karşılaştırılan döneme göre %${Math.abs(pct(cur.hours,prev.hours))} ${pct(cur.hours,prev.hours)>=0?"arttı":"azaldı"}. Uzun videodan en az 3 Shorts üret.</p><div class="row"><button class="secondary" id="addStats">Veri gir</button><button class="secondary" id="youtubeImport"><i data-lucide="youtube"></i> YouTube verisi</button></div></div>`;
+  const yt=state.youtube||{},connected=Boolean(yt.connected);
+  const youtubeCard=`<div class="card youtubeCard"><div class="row between"><div class="row">${yt.avatar?`<img class="channelAvatar" src="${escape(yt.avatar)}">`:'<div class="youtubeIcon"><i data-lucide="youtube"></i></div>'}<div><h2 style="margin:0">${connected?escape(yt.title||"YouTube kanalı"):"YouTube kanalını bağla"}</h2><div class="muted">${connected?`${Number(yt.subscribers||0).toLocaleString("tr-TR")} abone • ${yt.lastSyncedAt?"Son güncelleme "+new Date(yt.lastSyncedAt).toLocaleString("tr-TR"):"Henüz güncellenmedi"}`:"Veriler otomatik olarak 7/28/90/365 günlük çekilsin"}</div></div></div><span class="badge ${connected?"connected":""}">${connected?"BAĞLI":"BAĞLI DEĞİL"}</span></div><div class="row youtubeActions">${connected?'<button class="primary" id="youtubeSync">Şimdi Güncelle</button><button class="secondary" id="youtubeDisconnect">Bağlantıyı Kes</button>':'<button class="primary" id="youtubeConnect"><i data-lucide="youtube"></i> Google ile Bağla</button>'}<button class="secondary" id="youtubeImport">Elle Veri Gir</button></div><p class="muted oauthNote">Salt okunur izin kullanılır. Uygulama kanalında video yayımlayamaz veya silemez.</p></div>`;
+  const body=`${youtubeCard}<div class="tabs periodTabs">${[7,28,90,365].map(d=>`<button class="tab ${analyticsPeriod===d?"active":""}" data-period="${d}">${d===365?"1 Yıl":d+" Gün"}</button>`).join("")}</div><div class="grid3" style="grid-template-columns:repeat(2,1fr)">${metrics.map(a=>`<div class="metric"><small>${a[0]}</small><b>${Number.isFinite(a[1])?Number(a[1]).toLocaleString("tr-TR"):a[1]}</b><span class="trend ${a[2]<0?"down":""}">${a[2]>=0?"↑":"↓"} %${Math.abs(a[2])}</span></div>`).join("")}</div><div class="card"><div class="row between"><h2>Dönem kıyası</h2><span class="badge">${escape(cur.period)}</span></div><div class="chart"><svg viewBox="0 0 400 150" preserveAspectRatio="none"><polyline points="0,125 45,110 85,116 125,80 170,96 210,62 255,75 300,40 345,55 400,18" fill="none" stroke="#24e37a" stroke-width="6"/></svg></div><div class="compare"><span>İzleyici tutma <b>%${cur.retention}</b></span><span>Önceki dönem <b>%${prev.retention}</b></span></div></div><div class="card"><div class="sectionhead"><h2>Aylık hedefler</h2><button class="link" id="editGoals">Düzenle</button></div>${[["Abone",cur.subs,state.goals.subscribers],["İzlenme",cur.views,state.goals.views],["Uzun video",publishedLong,state.goals.longVideos],["Shorts",publishedShorts,state.goals.shorts]].map(g=>`<div class="goal"><div class="row between"><b>${g[0]}</b><span>${(+g[1]).toLocaleString("tr-TR")} / ${(+g[2]).toLocaleString("tr-TR")}</span></div><div class="progress"><i style="width:${Math.min(100,(+g[1])/(+g[2]||1)*100)}%"></i></div></div>`).join("")}</div><div class="card insight"><span class="badge">✨ AI YORUMU</span><h2>${pct(cur.hours,prev.hours)>=0?"Büyüme devam ediyor":"Yeni format denemesi gerekli"}</h2><p>İzlenme süresi karşılaştırılan döneme göre %${Math.abs(pct(cur.hours,prev.hours))} ${pct(cur.hours,prev.hours)>=0?"arttı":"azaldı"}. Uzun videodan en az 3 Shorts üret.</p><div class="row"><button class="secondary" id="addStats">Veri gir</button></div></div>`;
   shell(body,"Kanal Analizi");
   document.querySelectorAll("[data-period]").forEach(x=>x.onclick=()=>{analyticsPeriod=+x.dataset.period;render()});
-  $("#addStats").onclick=statsForm;$("#editGoals").onclick=goalsForm;$("#youtubeImport").onclick=youtubeImportForm;icons();
+  $("#addStats").onclick=statsForm;$("#editGoals").onclick=goalsForm;$("#youtubeImport").onclick=youtubeImportForm;
+  if($("#youtubeConnect"))$("#youtubeConnect").onclick=connectYouTube;
+  if($("#youtubeSync"))$("#youtubeSync").onclick=()=>syncYouTube(true);
+  if($("#youtubeDisconnect"))$("#youtubeDisconnect").onclick=disconnectYouTube;
+  icons();
+}
+
+async function youtubeCall(action){
+  const {data,error}=await sb.functions.invoke("youtube-oauth",{body:{action,workspaceId:workspace.id}});
+  if(error){
+    let message=error.message;
+    try{const detail=await error.context?.json();message=detail?.error||message}catch{}
+    throw new Error(message);
+  }
+  if(data?.error)throw new Error(data.error);
+  return data;
+}
+async function connectYouTube(){
+  const btn=$("#youtubeConnect");if(btn){btn.disabled=true;btn.textContent="Google açılıyor…"}
+  try{const data=await youtubeCall("start");window.open(data.url,"_blank","noopener,noreferrer")}
+  catch(error){toast("YouTube bağlantısı: "+error.message)}
+  finally{if(btn){btn.disabled=false;btn.textContent="Google ile Bağla"}}
+}
+async function refreshYouTubeStatus(autoSync=false){
+  if(!workspace||!session)return;
+  try{
+    const data=await youtubeCall("status");
+    state.youtube={...(state.youtube||{}),connected:data.connected,...(data.channel||{})};
+    saveLocal();
+    if(autoSync&&data.connected&&(!data.channel?.lastSyncedAt||Date.now()-Date.parse(data.channel.lastSyncedAt)>6*60*60*1000))await syncYouTube(false);
+  }catch(error){console.warn("YouTube durum kontrolü:",error)}
+}
+async function syncYouTube(notify=true){
+  if(youtubeSyncing)return;youtubeSyncing=true;
+  const btn=$("#youtubeSync");if(btn){btn.disabled=true;btn.textContent="Güncelleniyor…"}
+  try{
+    const data=await youtubeCall("sync");
+    mutate(()=>{
+      for(const record of data.records||[]){const i=state.analyticsHistory.findIndex(x=>Number(x.days)===Number(record.days));if(i>=0)state.analyticsHistory[i]={...state.analyticsHistory[i],...record};else state.analyticsHistory.push(record)}
+      state.youtube={...(state.youtube||{}),connected:true,...data.channel,lastImport:new Date().toISOString()};
+    },"YouTube verileri otomatik güncellendi");
+    if(notify)toast("YouTube Analytics güncellendi");
+  }catch(error){toast("YouTube güncelleme hatası: "+error.message)}
+  finally{youtubeSyncing=false;if(btn){btn.disabled=false;btn.textContent="Şimdi Güncelle"}}
+}
+async function disconnectYouTube(){
+  if(!confirm("YouTube kanal bağlantısı kesilsin mi?"))return;
+  try{await youtubeCall("disconnect");mutate(()=>{state.youtube={connected:false}},"YouTube kanal bağlantısı kesildi");toast("YouTube bağlantısı kesildi")}
+  catch(error){toast(error.message)}
 }
 
 function quickSheet() {
@@ -934,7 +986,7 @@ function openAI(contextId) {
 }
 
 async function authScreen() {
-  app.innerHTML = `<main class="auth"><div class="stadiumPitch"></div><div class="authLogo"><div class="mark">9<span>0+</span></div><h1>90+ STUDIO</h1><p>Fikirden yayına, birlikte üret.</p></div><div class="authPanel"><form id="authForm"><div class="field" id="nameField" style="display:none"><label>Adınız</label><i class="authFieldIcon" data-lucide="users"></i><input name="name" placeholder="Adınız"></div><div class="field"><label>E-posta</label><i class="authFieldIcon" data-lucide="mail"></i><input name="email" type="email" autocomplete="email" placeholder="E-posta" required></div><div class="field"><label>Şifre</label><i class="authFieldIcon" data-lucide="lock-keyhole"></i><input name="password" type="password" autocomplete="current-password" placeholder="Şifre" minlength="6" required></div><button type="button" class="forgot" id="forgot">Şifremi unuttum?</button><div class="authActions"><button class="primary" id="submitAuth">Giriş Yap →</button></div></form><div class="authDivider">veya</div><div class="authSwitch"><span id="switchText">Hesabın yok mu?</span> <button id="switchMode">Kayıt Ol</button></div><p id="authMsg" class="authMessage"></p></div></main>`;
+  app.innerHTML = `<main class="auth"><div class="stadiumPitch"></div><div class="authLogo"><img class="authAppLogo" src="/icon-512.png" alt="90+ Studio"><h1>90+ STUDIO</h1><p>Fikirden yayına, birlikte üret.</p></div><div class="authPanel"><form id="authForm"><div class="field" id="nameField" style="display:none"><label>Adınız</label><i class="authFieldIcon" data-lucide="users"></i><input name="name" placeholder="Adınız"></div><div class="field"><label>E-posta</label><i class="authFieldIcon" data-lucide="mail"></i><input name="email" type="email" autocomplete="email" placeholder="E-posta" required></div><div class="field"><label>Şifre</label><i class="authFieldIcon" data-lucide="lock-keyhole"></i><input name="password" type="password" autocomplete="current-password" placeholder="Şifre" minlength="6" required></div><button type="button" class="forgot" id="forgot">Şifremi unuttum?</button><div class="authActions"><button class="primary" id="submitAuth">Giriş Yap →</button></div></form><div class="authDivider">veya</div><div class="authSwitch"><span id="switchText">Hesabın yok mu?</span> <button id="switchMode">Kayıt Ol</button></div><p id="authMsg" class="authMessage"></p></div></main>`;
   let mode = "login";
   const paint = () => {
     const signup = mode === "signup";
@@ -1005,7 +1057,7 @@ function forgotPassword() {
   };
 }
 function resetPasswordScreen() {
-  app.innerHTML = `<main class="auth"><div class="stadiumPitch"></div><div class="authLogo"><div class="mark">9<span>0+</span></div><h1>Yeni Şifre</h1><p>Hesabını güvenle geri al.</p></div><div class="resetCard"><h2>Yeni şifreni belirle</h2><p class="muted">En az 6 karakterlik yeni şifreni iki kez yaz.</p><form id="resetForm"><div class="field"><label>Yeni şifre</label><input name="password" type="password" minlength="6" required></div><div class="field"><label>Yeni şifre tekrar</label><input name="confirm" type="password" minlength="6" required></div><button class="primary">Şifreyi Kaydet</button><p id="resetMsg" class="muted" style="text-align:center"></p></form></div></main>`;
+  app.innerHTML = `<main class="auth"><div class="stadiumPitch"></div><div class="authLogo"><img class="authAppLogo" src="/icon-512.png" alt="90+ Studio"><h1>Yeni Şifre</h1><p>Hesabını güvenle geri al.</p></div><div class="resetCard"><h2>Yeni şifreni belirle</h2><p class="muted">En az 6 karakterlik yeni şifreni iki kez yaz.</p><form id="resetForm"><div class="field"><label>Yeni şifre</label><input name="password" type="password" minlength="6" required></div><div class="field"><label>Yeni şifre tekrar</label><input name="confirm" type="password" minlength="6" required></div><button class="primary">Şifreyi Kaydet</button><p id="resetMsg" class="muted" style="text-align:center"></p></form></div></main>`;
   $("#resetForm").onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target),
@@ -1021,7 +1073,17 @@ function resetPasswordScreen() {
   };
 }
 async function handleAuthLink(url) {
-  if (!url || !url.startsWith(RESET_REDIRECT)) return;
+  if (!url) return;
+  if (url.startsWith(YOUTUBE_REDIRECT)) {
+    const params=new URL(url).searchParams;
+    if(params.get("status")==="success"){
+      toast("YouTube kanalı bağlandı. Veriler alınıyor…");
+      await refreshYouTubeStatus();
+      await syncYouTube(true);
+    }else toast("YouTube bağlantısı kurulamadı: "+(params.get("message")||"Bilinmeyen hata"));
+    page="analytics";render();return;
+  }
+  if (!url.startsWith(RESET_REDIRECT)) return;
   const hash = url.split("#")[1] || "",
     params = new URLSearchParams(hash),
     access_token = params.get("access_token"),
@@ -1041,7 +1103,7 @@ async function handleAuthLink(url) {
   boot();
 }
 async function workspaceScreen() {
-  app.innerHTML = `<main class="auth"><div class="authLogo"><div class="mark">9<span>0+</span></div><h1>Çalışma Alanı</h1><p>Kanalınızı iki telefonda birlikte yönetin.</p></div><div class="card" style="color:var(--navy)"><h2>Yeni alan oluştur</h2><p class="muted">İlk telefonda bunu kullan.</p><button class="primary" id="createWs">90+ Futbol’u Oluştur</button></div><div class="card" style="color:var(--navy)"><h2>Koda katıl</h2><div class="field"><input id="joinCode" placeholder="6 haneli ekip kodu"></div><button class="secondary" style="width:100%" id="joinWs">Katıl</button></div><button class="secondary" id="logout">Çıkış Yap</button></main>`;
+  app.innerHTML = `<main class="auth"><div class="authLogo"><img class="authAppLogo" src="/icon-512.png" alt="90+ Studio"><h1>Çalışma Alanı</h1><p>Kanalınızı iki telefonda birlikte yönetin.</p></div><div class="card" style="color:var(--navy)"><h2>Yeni alan oluştur</h2><p class="muted">İlk telefonda bunu kullan.</p><button class="primary" id="createWs">90+ Futbol’u Oluştur</button></div><div class="card" style="color:var(--navy)"><h2>Koda katıl</h2><div class="field"><input id="joinCode" placeholder="6 haneli ekip kodu"></div><button class="secondary" style="width:100%" id="joinWs">Katıl</button></div><button class="secondary" id="logout">Çıkış Yap</button></main>`;
   $("#logout").onclick = () => sb.auth.signOut();
   $("#createWs").onclick = async () => {
     const { data, error } = await sb.rpc("studio_create_workspace", {
@@ -1081,6 +1143,7 @@ async function loadWorkspace() {
     if (data?.data) state = normalizeState(data.data);
     else { loadLocal(); state=normalizeState(state); }
     await refreshMediaUrls();
+    await refreshYouTubeStatus(true);
     sb.channel("studio-sync")
       .on(
         "postgres_changes",
@@ -1147,3 +1210,4 @@ CapacitorApp.addListener("appUrlOpen", ({ url }) => handleAuthLink(url));
 CapacitorApp.getLaunchUrl()
   .then((data) => (data?.url ? handleAuthLink(data.url) : boot()))
   .catch(boot);
+

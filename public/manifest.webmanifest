@@ -1,1 +1,1 @@
-{"name":"90+ Studio","short_name":"90+","start_url":"/","display":"standalone","background_color":"#071A2E","theme_color":"#071A2E","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{"name":"90+ Studio","short_name":"90+","start_url":"/","display":"standalone","background_color":"#071A2E","theme_color":"#071A2E","icons":[{"src":"/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"},{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
