@@ -15,6 +15,9 @@ create table if not exists public.studio_youtube_connections (
 
 alter table public.studio_youtube_connections enable row level security;
 
+create index if not exists studio_youtube_connections_connected_by_idx
+  on public.studio_youtube_connections (connected_by);
+
 revoke all on table public.studio_youtube_connections from public, anon, authenticated;
 grant all on table public.studio_youtube_connections to service_role;
 
