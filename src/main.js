@@ -516,6 +516,12 @@ function openContent(id) {
   page = "detail";
   render();
 }
+const clockToSeconds=(value)=>{const parts=String(value||'').trim().split(':').map(Number);if(parts.some(Number.isNaN))return 0;return parts.length===3?parts[0]*3600+parts[1]*60+parts[2]:(parts[0]||0)*60+(parts[1]||0)};
+const secondsToClock=(total)=>{total=Math.max(0,Math.round(Number(total)||0));const h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`};
+function sceneSeconds(scene){if(Number(scene.durationSec)>0)return Number(scene.durationSec);const match=String(scene.time||'').split(/[–—-]/);return match.length>1?Math.max(1,clockToSeconds(match[1])-clockToSeconds(match[0])):15}
+function rebuildTimeline(content){let cursor=0;(content.scenes||[]).forEach((s,i)=>{s.no=i+1;s.durationSec=Math.max(1,Math.round(sceneSeconds(s)));s.startSec=cursor;s.endSec=cursor+s.durationSec;s.time=`${secondsToClock(s.startSec)}–${secondsToClock(s.endSec)}`;cursor=s.endSec});content.timelineDurationSec=cursor;return cursor}
+function durationRule(content,total){const min=content.type==='Shorts'?40:360,max=content.type==='Shorts'?90:Infinity;if(total<min)return {tone:'short',text:`${secondsToClock(min-total)} kısa • minimum ${secondsToClock(min)}`};if(total>max)return {tone:'short',text:`${secondsToClock(total-max)} uzun • maksimum ${secondsToClock(max)}`};return {tone:'',text:'Süre hedefe uygun'} }
+function moveScene(content,id,direction){const index=content.scenes.findIndex(s=>s.id===id),next=index+direction;if(index<0||next<0||next>=content.scenes.length)return;[content.scenes[index],content.scenes[next]]=[content.scenes[next],content.scenes[index]];rebuildTimeline(content)}
 const checkLabels = {
   research: "Araştırma",
   sources: "Kaynak doğrulama",
@@ -535,6 +541,7 @@ function detail() {
   const completed = Object.values(c.checks).filter(Boolean).length,
     progress = Math.round((completed / Object.keys(c.checks).length) * 100);
   c.progress = progress;
+  const timelineTotal=rebuildTimeline(c),timelineRule=durationRule(c,timelineTotal);
   const contentMedia = state.media.filter((m) => m.contentId === c.id),
     comments = state.comments.filter((x) => x.contentId === c.id),
     sources = state.sources.filter((x) => x.contentId === c.id);
@@ -547,7 +554,7 @@ function detail() {
     )
     .join(
       "",
-    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div>${c.scenes.map((s) => `<article class="card scene"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><b>${escape(s.title)}</b><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.time)} • ${escape(s.narration)}</p><div class="prompt"><b>Grok Promptu</b><br>${escape(s.prompt)}</div><div class="row"><button class="link scenePhoto" data-scene="${s.id}">📷 Fotoğraf</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map(m=>`<div class="media ${m.type?.startsWith("video")?"video":""}" data-view-media="${m.id}">${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
+    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div><div class="card timelineSummary"><div class="row between"><div><small>TOPLAM KURGU</small><h2>${secondsToClock(timelineTotal)}</h2></div><span class="badge ${timelineRule.tone}">${escape(timelineRule.text)}</span></div><div class="timelineBar">${c.scenes.map(s=>`<i title="${escape(s.title)} • ${s.durationSec} sn" style="flex:${s.durationSec}"></i>`).join('')}</div><div class="muted">${c.scenes.length} sahne • ${c.type==='Shorts'?'Hedef 40–90 saniye':'Minimum hedef 06:00'}</div></div>${c.scenes.map((s) => `<article class="card scene" data-scene-card="${s.id}"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.section||'Genel')} • ${escape(s.time)} • ${s.durationSec} sn</div></div><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.narration||'Seslendirme eklenmedi')}</p>${s.onScreenText?`<div class="prompt"><b>Ekran yazısı</b><br>${escape(s.onScreenText)}</div>`:''}<div class="prompt"><b>Görsel Promptu</b><br>${escape(s.prompt||'Eklenmedi')}</div><div class="sceneTools"><button class="secondary sceneAdjust" data-scene="${s.id}" data-delta="-5">−5 sn</button><button class="secondary sceneAdjust" data-scene="${s.id}" data-delta="-1">−1</button><button class="secondary sceneAdjust" data-scene="${s.id}" data-delta="1">+1</button><button class="secondary sceneAdjust" data-scene="${s.id}" data-delta="5">+5 sn</button></div><div class="row sceneActions"><button class="link sceneMove" data-scene="${s.id}" data-move="-1">↑</button><button class="link sceneMove" data-scene="${s.id}" data-move="1">↓</button><button class="link sceneEdit" data-scene="${s.id}">Düzenle</button><button class="link scenePhoto" data-scene="${s.id}">📷 Medya</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map(m=>`<div class="media ${m.type?.startsWith("video")?"video":""}" data-view-media="${m.id}">${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
   shell(body, "İçerik Detayı", true);
   document
     .querySelectorAll("[data-check]")
@@ -562,6 +569,9 @@ function detail() {
     );
   $("#editContent").onclick = () => contentForm(c);
   $("#addScene").onclick = () => sceneForm(c);
+  document.querySelectorAll('.sceneEdit').forEach(x=>x.onclick=()=>sceneForm(c,c.scenes.find(s=>s.id===x.dataset.scene)));
+  document.querySelectorAll('.sceneAdjust').forEach(x=>x.onclick=()=>mutate(()=>{const s=c.scenes.find(v=>v.id===x.dataset.scene);s.durationSec=Math.max(1,sceneSeconds(s)+Number(x.dataset.delta));rebuildTimeline(c)},`Sahne süresi ${Number(x.dataset.delta)>0?'uzatıldı':'kısaltıldı'}`,c.id));
+  document.querySelectorAll('.sceneMove').forEach(x=>x.onclick=()=>mutate(()=>moveScene(c,x.dataset.scene,Number(x.dataset.move)),'Sahne sırası değiştirildi',c.id));
   $("#aiContent").onclick = () => openAI(c.id);
   $("#prevStage").onclick = () => moveStage(c, -1);
   $("#nextStage").onclick = () => moveStage(c, 1);
@@ -914,22 +924,16 @@ function taskForm() {
     closeSheet();
   };
 }
-function sceneForm(c) {
+function sceneForm(c,scene=null) {
   sheet(
-    `<h2>Yeni Sahne</h2><form id="sceneForm"><div class="field"><label>Sahne başlığı</label><input name="title" required></div><div class="field"><label>Süre</label><input name="time" placeholder="00:00–00:15"></div><div class="field"><label>Seslendirme</label><textarea name="narration"></textarea></div><div class="field"><label>Grok promptu</label><textarea name="prompt"></textarea></div><button class="primary">Sahneyi Ekle</button></form>`,
+    `<h2>${scene?'Sahneyi Düzenle':'Yeni Sahne'}</h2><form id="sceneForm"><div class="field"><label>Sahne başlığı</label><input name="title" required value="${escape(scene?.title||'')}"></div><div class="form2"><div class="field"><label>Bölüm</label><select name="section">${['Kanca','Giriş','Yükseliş','Zirve','Kırılma','Düşüş','Günümüz','Final','Genel'].map(x=>`<option ${scene?.section===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Süre (saniye)</label><input name="durationSec" type="number" min="1" value="${scene?sceneSeconds(scene):15}" required></div></div><div class="form2"><div class="field"><label>Durum</label><select name="status">${['Eksik','Hazırlanıyor','Hazır','Kontrol'].map(x=>`<option ${scene?.status===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="field"><label>Geçiş</label><select name="transition">${['Kesme','Fade','Siyaha geçiş','Yakınlaştırma','Sağa kaydırma','Sola kaydırma','Flash'].map(x=>`<option ${scene?.transition===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="field"><label>Seslendirme</label><textarea name="narration">${escape(scene?.narration||'')}</textarea></div><div class="field"><label>Ekranda görünecek yazı</label><input name="onScreenText" value="${escape(scene?.onScreenText||'')}"></div><div class="field"><label>Görsel promptu</label><textarea name="prompt">${escape(scene?.prompt||'')}</textarea></div><div class="field"><label>Video/hareket promptu</label><textarea name="videoPrompt">${escape(scene?.videoPrompt||'')}</textarea></div><div class="form2"><div class="field"><label>Kamera hareketi</label><input name="camera" value="${escape(scene?.camera||'')}"></div><div class="field"><label>Müzik / SFX</label><input name="audioCue" value="${escape(scene?.audioCue||'')}"></div></div><div class="field"><label>Kurgu ve kontrol notları</label><textarea name="notes">${escape(scene?.notes||'')}</textarea></div><button class="primary">${scene?'Değişiklikleri Kaydet':'Sahneyi Ekle'}</button></form>`,
   );
   $("#sceneForm").onsubmit = (e) => {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(e.target));
     mutate(
-      () =>
-        c.scenes.push({
-          id: uid(),
-          no: c.scenes.length + 1,
-          status: "Eksik",
-          ...d,
-        }),
-      "Yeni sahne eklendi",
+      () => {d.durationSec=Math.max(1,Number(d.durationSec)||15);if(scene)Object.assign(scene,d);else c.scenes.push({id:uid(),no:c.scenes.length+1,...d});rebuildTimeline(c)},
+      scene?"Sahne güncellendi":"Yeni sahne eklendi",
     );
     closeSheet();
   };
