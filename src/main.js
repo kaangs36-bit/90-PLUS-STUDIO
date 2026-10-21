@@ -35,6 +35,7 @@ import {
   MoreVertical,
   Youtube,
   Copy,
+  FileCheck2,
 } from "lucide";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
@@ -234,6 +235,13 @@ const baseState = () => ({
     },
   ],
   activity: [],
+  templates: [
+    {id:uid(),name:"Ne Oldu Bu Adama?",type:"Uzun Video",series:"Ne Oldu Bu Adama?",duration:"06:00–10:00",tone:"Sinematik belgesel"},
+    {id:uid(),name:"90+ Karşılaştırma",type:"Shorts",series:"90+ Karşılaştırma",duration:"00:40–01:10",tone:"Hızlı ve tartışmalı"},
+  ],
+  brandKit:{primary:"#061b2e",accent:"#23ee78",support:"#32c8ff",font:"Inter / kalın",visualStyle:"Sinematik çizgi roman, güçlü kontrast, stadyum ışığı",intro:"90+ Futbol",outro:"Sen olsan kimi seçerdin?"},
+  snapshots:[],
+  notifications:[],
 });
 let session = null,
   workspace = null,
@@ -270,7 +278,7 @@ function mergeList(remote=[],local=[],preferLocal=true){
 function mergeStates(remote,local,preferLocal=true){
   remote=remote&&Object.keys(remote).length?normalizeState(structuredClone(remote)):{ideas:[],contents:[],tasks:[],media:[],trash:[],comments:[],sources:[],activity:[],chat:[],deletedMedia:[],analyticsHistory:[],goals:{}};local=normalizeState(structuredClone(local||{}));
   const merged={...remote,...local};
-  ["ideas","contents","tasks","media","trash","comments","sources","activity"].forEach(k=>merged[k]=mergeList(remote[k],local[k],preferLocal));
+  ["ideas","contents","tasks","media","trash","comments","sources","activity","templates","snapshots","notifications"].forEach(k=>merged[k]=mergeList(remote[k],local[k],preferLocal));
   merged.chat=(preferLocal?local.chat:remote.chat)||[];
   merged.analyticsHistory=mergeList(remote.analyticsHistory?.map((x,i)=>({...x,id:String(x.days||x.period||i)})),local.analyticsHistory?.map((x,i)=>({...x,id:String(x.days||x.period||i)})),preferLocal).map(({id,...x})=>x);
   merged.goals={...remote.goals,...local.goals};merged.youtube={...remote.youtube,...local.youtube};
@@ -292,7 +300,8 @@ async function sync(){
 }
 function normalizeState(s){
   const d=baseState();s=s&&Object.keys(s).length?s:d;
-  ["ideas","contents","tasks","media","trash","comments","sources","activity","chat","deletedMedia"].forEach(k=>s[k]=Array.isArray(s[k])?s[k]:(d[k]||[]));
+  ["ideas","contents","tasks","media","trash","comments","sources","activity","chat","deletedMedia","templates","snapshots","notifications"].forEach(k=>s[k]=Array.isArray(s[k])?s[k]:(d[k]||[]));
+  s.brandKit={...d.brandKit,...(s.brandKit||{})};
   s.goals={...d.goals,...(s.goals||{})};s.analyticsHistory=Array.isArray(s.analyticsHistory)&&s.analyticsHistory.length?s.analyticsHistory:d.analyticsHistory;
   s.contents.forEach(c=>{c.checks={research:false,sources:false,script:false,voice:false,visuals:false,edit:false,cover:false,publish:false,...c.checks};c.scenes=Array.isArray(c.scenes)?c.scenes:[];c.status=c.status==="Yayınlandı"?"Paylaşıldı":c.status});
   s.version=3;return s;
@@ -349,11 +358,12 @@ function icons() {
       MoreVertical,
       Youtube,
       Copy,
+      FileCheck2,
     },
   });
 }
 const nav = () =>
-  `<button class="nav ${page === "home" ? "active" : ""}" data-page="home"><i data-lucide="home"></i>Ana Sayfa</button><button class="nav ${page === "content" ? "active" : ""}" data-page="content"><i data-lucide="layout-dashboard"></i>İçerikler</button><button class="nav ${page === "calendar" ? "active" : ""}" data-page="calendar"><i data-lucide="calendar-days"></i>Takvim</button><button class="nav ${page === "media" ? "active" : ""}" data-page="media"><i data-lucide="images"></i>Arşiv</button><button class="nav ${page === "analytics" ? "active" : ""}" data-page="analytics"><i data-lucide="chart-no-axes-combined"></i>Kanal</button>`;
+  `<button class="nav ${page === "home" ? "active" : ""}" data-page="home"><i data-lucide="home"></i>Ana Sayfa</button><button class="nav ${page === "content" ? "active" : ""}" data-page="content"><i data-lucide="layout-dashboard"></i>İçerikler</button><button class="nav ${page === "production" ? "active" : ""}" data-page="production"><i data-lucide="file-check-2"></i>Stüdyo</button><button class="nav ${page === "calendar" ? "active" : ""}" data-page="calendar"><i data-lucide="calendar-days"></i>Takvim</button><button class="nav ${page === "media" ? "active" : ""}" data-page="media"><i data-lucide="images"></i>Arşiv</button><button class="nav ${page === "analytics" ? "active" : ""}" data-page="analytics"><i data-lucide="chart-no-axes-combined"></i>Kanal</button>`;
 const header = (title = "Merhaba Kaan", back = false) =>
   `<header class="top"><div class="topline"><div class="brand">${back ? '<button class="iconbtn" id="back"><i data-lucide="arrow-left"></i></button>' : '<div class="avatar">90</div>'}<div><b>${escape(title)}</b><div class="sub">${online ? "Birlikte üret, birlikte büyüt" : "Çevrimdışı • Değişiklikler saklanıyor"}</div></div></div><div class="row">${!online ? '<i data-lucide="wifi-off"></i>' : ""}<button class="iconbtn" id="aiTop"><i data-lucide="sparkles"></i></button><button class="iconbtn" id="settingsTop"><i data-lucide="settings"></i></button><button class="iconbtn" id="notify"><i data-lucide="bell"></i></button></div></div></header>`;
 function shell(body, title, back = false) {
@@ -649,6 +659,47 @@ function trashContent(c) {
   );
 }
 
+function qualityReport(c){
+  const total=rebuildTimeline(c),issues=[],checks=c.checks||{},scenes=c.scenes||[];
+  let score=100;
+  if(!c.hook?.trim()){issues.push("İlk saniyeler için kanca eksik");score-=15}
+  if(!c.script?.trim()){issues.push("Senaryo metni eksik");score-=20}
+  if(!state.sources.some(s=>s.contentId===c.id&&s.verified)){issues.push("Doğrulanmış kaynak bulunmuyor");score-=12}
+  if(!scenes.length){issues.push("Sahne planı oluşturulmamış");score-=20}
+  if(scenes.some(s=>!s.narration?.trim())){issues.push("Seslendirmesi eksik sahneler var");score-=8}
+  if(scenes.some(s=>!s.prompt?.trim())){issues.push("Görsel promptu eksik sahneler var");score-=8}
+  if(c.type==="Shorts"&&(total<40||total>90)){issues.push("Shorts süresi 40–90 saniye dışında");score-=12}
+  if(c.type!=="Shorts"&&total<360){issues.push("Uzun video 6 dakikadan kısa");score-=12}
+  if(!checks.cover){issues.push("Kapak kontrolü tamamlanmadı");score-=5}
+  if(!c.youtubeDescription?.trim()){issues.push("YouTube açıklaması eksik");score-=5}
+  if(!c.hashtags?.trim()){issues.push("Etiketler eksik");score-=3}
+  return {score:Math.max(0,score),issues,total};
+}
+function production(){
+  const active=state.contents.filter(c=>c.status!=="Paylaşıldı"),reports=active.map(c=>({c,...qualityReport(c)}));
+  const average=reports.length?Math.round(reports.reduce((n,r)=>n+r.score,0)/reports.length):100;
+  const body=`<div class="studioHero"><div><span>90+ ÜRETİM MERKEZİ</span><h1>Yayına kadar her şey tek yerde</h1><p>Kalite, ses, kapak, yayın paketi ve sürüm takibi.</p></div><div class="scoreRing"><b>${average}</b><small>ORTALAMA</small></div></div>
+  <div class="grid3 studioMetrics"><button class="metric green" id="brandKit"><b>🎨</b><small>Marka Kiti</small></button><button class="metric blue" id="newTemplate"><b>⚡</b><small>Şablonlar</small></button><button class="metric red" id="snapshot"><b>↺</b><small>Sürüm Yedeği</small></button></div>
+  <div class="sectionhead"><h2>Yayın kontrol odası</h2><span class="muted">${reports.length} aktif proje</span></div>
+  ${reports.map(({c,score,issues,total})=>`<article class="card qualityCard" data-quality="${c.id}"><div class="row between"><div><span class="badge ${c.type==='Shorts'?'short':''}">${escape(c.type)}</span><h3>${escape(c.title)}</h3></div><div class="qualityScore ${score<60?'bad':score<80?'warn':''}">${score}</div></div><div class="row between"><span class="muted">${secondsToClock(total)} • ${escape(c.status)}</span><b>${issues.length?issues.length+' eksik':'Yayına hazır'}</b></div><div class="progress"><i style="width:${score}%"></i></div><div class="qualityActions"><button class="secondary" data-package="${c.id}">Yayın Paketi</button><button class="secondary" data-audit="${c.id}">AI Kontrol</button><button class="link" data-open="${c.id}">Detay</button></div>${issues.slice(0,2).map(x=>`<div class="issue">• ${escape(x)}</div>`).join('')}</article>`).join('')||'<div class="empty">Aktif içerik bulunmuyor.</div>'}
+  <div class="sectionhead"><h2>İçerik şablonları</h2><span class="muted">${state.templates.length} şablon</span></div>${state.templates.map(t=>`<div class="card row between"><div><b>${escape(t.name)}</b><div class="muted">${escape(t.type)} • ${escape(t.duration)} • ${escape(t.tone)}</div></div><button class="link" data-use-template="${t.id}">Kullan</button></div>`).join('')}
+  <div class="sectionhead"><h2>Sürüm geçmişi</h2></div>${state.snapshots.slice(0,5).map(s=>`<div class="card row between"><div><b>${escape(s.name)}</b><div class="muted">${new Date(s.at).toLocaleString('tr-TR')} • ${escape(s.actor)}</div></div><button class="link" data-restore-snapshot="${s.id}">Geri yükle</button></div>`).join('')||'<div class="empty">Henüz yedek oluşturulmadı.</div>'}`;
+  shell(body,"Üretim Merkezi");
+  $("#brandKit").onclick=brandKitForm;$("#newTemplate").onclick=templateForm;
+  $("#snapshot").onclick=()=>mutate(()=>state.snapshots.unshift({id:uid(),name:`Yedek ${state.snapshots.length+1}`,actor:actorName(),at:new Date().toISOString(),data:structuredClone({...state,snapshots:[]})}),"Çalışma alanı yedeği oluşturuldu");
+  document.querySelectorAll('[data-open]').forEach(x=>x.onclick=()=>openContent(x.dataset.open));
+  document.querySelectorAll('[data-package]').forEach(x=>x.onclick=()=>publishPackageForm(state.contents.find(c=>c.id===x.dataset.package)));
+  document.querySelectorAll('[data-audit]').forEach(x=>x.onclick=()=>aiQualityAudit(state.contents.find(c=>c.id===x.dataset.audit)));
+  document.querySelectorAll('[data-use-template]').forEach(x=>x.onclick=()=>useTemplate(state.templates.find(t=>t.id===x.dataset.useTemplate)));
+  document.querySelectorAll('[data-restore-snapshot]').forEach(x=>x.onclick=()=>{const s=state.snapshots.find(v=>v.id===x.dataset.restoreSnapshot);if(!s)return;const history=state.snapshots;state=normalizeState(structuredClone(s.data));state.snapshots=history;mutate(()=>{},`${s.name} geri yüklendi`)});
+  icons();
+}
+function useTemplate(t){if(!t)return;contentForm({__template:true,title:"",type:t.type,series:t.series,duration:t.duration,description:`${t.tone} formatında yeni içerik`})}
+function brandKitForm(){const b=state.brandKit;sheet(`<h2>🎨 Kanal Marka Kiti</h2><form id="brandForm"><div class="form2"><div class="field"><label>Ana renk</label><input name="primary" type="color" value="${escape(b.primary)}"></div><div class="field"><label>Vurgu rengi</label><input name="accent" type="color" value="${escape(b.accent)}"></div></div><div class="field"><label>Yazı karakteri</label><input name="font" value="${escape(b.font)}"></div><div class="field"><label>Sabit görsel stil</label><textarea name="visualStyle">${escape(b.visualStyle)}</textarea></div><div class="field"><label>Intro metni</label><input name="intro" value="${escape(b.intro)}"></div><div class="field"><label>Outro / yorum sorusu</label><input name="outro" value="${escape(b.outro)}"></div><button class="primary">Marka Kitini Kaydet</button></form>`);$('#brandForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));mutate(()=>Object.assign(state.brandKit,d),'Marka kiti güncellendi');closeSheet()}}
+function templateForm(){sheet(`<h2>Yeni İçerik Şablonu</h2><form id="templateForm"><div class="field"><label>Şablon adı</label><input name="name" required></div><div class="form2"><div class="field"><label>Tür</label><select name="type"><option>Uzun Video</option><option>Shorts</option></select></div><div class="field"><label>Hedef süre</label><input name="duration" value="00:40–01:10"></div></div><div class="field"><label>Seri</label><input name="series" required></div><div class="field"><label>Ton</label><input name="tone" value="Sinematik"></div><button class="primary">Şablonu Kaydet</button></form>`);$('#templateForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));mutate(()=>state.templates.push({id:uid(),...d}),'Yeni içerik şablonu oluşturuldu');closeSheet()}}
+function publishPackageForm(c){if(!c)return;sheet(`<h2>🚀 Yayın Paketi</h2><div class="muted">${escape(c.title)}</div><form id="packageForm"><div class="field"><label>YouTube başlığı</label><input name="youtubeTitle" value="${escape(c.youtubeTitle||c.title)}"></div><div class="field"><label>Açıklama</label><textarea name="youtubeDescription">${escape(c.youtubeDescription||'')}</textarea></div><div class="field"><label>Etiketler / hashtag</label><textarea name="hashtags">${escape(c.hashtags||'')}</textarea></div><div class="field"><label>Sabit yorum</label><textarea name="pinnedComment">${escape(c.pinnedComment||state.brandKit.outro)}</textarea></div><div class="form2"><div class="field"><label>Yayın tarihi</label><input name="due" type="date" value="${escape(c.due||iso(today))}"></div><div class="field"><label>Yayın saati</label><input name="publishTime" type="time" value="${escape(c.publishTime||'19:00')}"></div></div><button class="primary">Paketi Kaydet</button></form>`);$('#packageForm').onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));mutate(()=>{Object.assign(c,d);c.checks.publish=!!(d.youtubeTitle&&d.youtubeDescription)},`${c.title} yayın paketi güncellendi`,c.id);closeSheet()}}
+async function aiQualityAudit(c){if(!c)return;toast('AI kalite kontrolü hazırlanıyor…');const q=qualityReport(c);try{const data=await invokeStudioAI({workspaceId:workspace.id,message:`Bu futbol videosu projesini editör gibi denetle. Kısa, uygulanabilir Türkçe öneriler ver. Tür: ${c.type}. Başlık: ${c.title}. Kanca: ${c.hook||'-'}. Senaryo: ${c.script||'-'}. Toplam süre: ${q.total} saniye. Tespitler: ${q.issues.join(', ')}`,history:[],context:{operation:'quality-audit'}});sheet(`<h2>✨ AI Kalite Raporu</h2><div class="qualityScore">${q.score}</div><div class="aiAudit">${escape(data?.text||'Rapor oluşturulamadı.').replace(/\n/g,'<br>')}</div><button class="primary" id="auditClose">Tamam</button>`);$('#auditClose').onclick=closeSheet}catch(err){toast('AI kontrol hatası: '+err.message)}}
+
 function calendar() {
   const days = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
   const body = `<div class="card"><div class="row between"><h2>Haftalık Takvim</h2><span class="badge">Bu Hafta</span></div><div class="week">${days.map((d, i) => `<div class="day ${i === 4 ? "active" : ""}"><b>${d}</b><br>${14 + i}</div>`).join("")}</div></div><div class="sectionhead"><h2>Üretim programı</h2><button class="link" id="newTask">+ Görev</button></div>${state.tasks
@@ -862,6 +913,7 @@ function sheet(html) {
 }
 const closeSheet = () => $("#overlay")?.remove();
 function contentForm(c) {
+  const isTemplate=!!c?.__template;
   sheet(
     `<h2>${c ? "İçeriği Düzenle" : "Yeni İçerik"}</h2><form id="contentForm"><div class="field"><label>Başlık</label><input name="title" required value="${escape(c?.title || "")}"></div><div class="form2"><div class="field"><label>Tür</label><select name="type"><option>Uzun Video</option><option ${c?.type === "Shorts" ? "selected" : ""}>Shorts</option></select></div><div class="field"><label>Öncelik</label><select name="priority">${['Düşük','Orta','Yüksek','Acil'].map(x=>`<option ${c?.priority===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="field"><label>Seri</label><select name="series">${["Ne Oldu Bu Adama?", "Parasını Hak Etti mi?", "90+ Karşılaştırma", "Ramak Kala Transferler", "Son Dakika Hikâyeleri"].map((x) => `<option ${c?.series === x ? "selected" : ""}>${x}</option>`).join("")}</select></div><div class="form2"><div class="field"><label>Sorumlu</label><input name="owner" value="${escape(c?.owner||actorName())}"></div><div class="field"><label>Yayın tarihi</label><input name="due" type="date" value="${escape(c?.due||iso(new Date(today.getTime()+7*864e5)))}"></div></div><div class="form2"><div class="field"><label>Hedef</label><input name="target" value="${escape(c?.target||'İzlenme ve abone')}"></div><div class="field"><label>Hedef süre</label><input name="duration" value="${escape(c?.duration||'6-8 dakika')}"></div></div><div class="field"><label>Açıklama</label><textarea name="description">${escape(c?.description||'')}</textarea></div><div class="field"><label>Kanca</label><textarea name="hook">${escape(c?.hook || "")}</textarea></div><div class="field"><label>Senaryo</label><textarea name="script">${escape(c?.script || "")}</textarea></div><button class="primary">Kaydet</button></form>`,
   );
@@ -870,14 +922,14 @@ function contentForm(c) {
     const d = Object.fromEntries(new FormData(e.target));
     mutate(
       () => {
-        if (c) Object.assign(c, d);
+        if (c&&!isTemplate) Object.assign(c, d);
         else
           state.contents.unshift({
             id: uid(),
             ...d,
             status: "Planlandı",
             progress: 0,
-            due: iso(new Date(today.getTime() + 7 * 864e5)),
+            due: d.due||iso(new Date(today.getTime() + 7 * 864e5)),
             checks: {
               research: false,
               sources: false,
@@ -891,7 +943,7 @@ function contentForm(c) {
             scenes: [],
           });
       },
-      c ? "İçerik güncellendi" : "Yeni içerik oluşturuldu",
+      c&&!isTemplate ? "İçerik güncellendi" : "Yeni içerik oluşturuldu",
     );
     closeSheet();
   };
@@ -912,11 +964,11 @@ function ideaForm() {
 }
 function taskForm() {
   sheet(
-    `<h2>Yeni Görev</h2><form id="taskForm"><div class="field"><label>Görev</label><input name="title" required></div><div class="field"><label>Gün</label><select name="day">${["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"].map((x, i) => `<option value="${i + 1}">${x}</option>`).join("")}</select></div><div class="field"><label>Saat</label><input name="time" type="time" value="19:00"></div><div class="field"><label>Sorumlu</label><select name="owner"><option>Kaan</option><option>Kuzen</option><option>Ortak</option></select></div><button class="primary">Görevi Ekle</button></form>`,
+    `<h2>Yeni Görev</h2><form id="taskForm"><div class="field"><label>Görev</label><input name="title" required></div><div class="field"><label>Bağlı içerik</label><select name="contentId"><option value="">Genel görev</option>${state.contents.map(c=>`<option value="${c.id}">${escape(c.title)}</option>`).join('')}</select></div><div class="form2"><div class="field"><label>Gün</label><select name="day">${["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"].map((x, i) => `<option value="${i + 1}">${x}</option>`).join("")}</select></div><div class="field"><label>Saat</label><input name="time" type="time" value="19:00"></div></div><div class="form2"><div class="field"><label>Sorumlu</label><select name="owner"><option>Kaan</option><option>Kuzen</option><option>Ortak</option></select></div><div class="field"><label>Öncelik</label><select name="priority"><option>Düşük</option><option selected>Orta</option><option>Yüksek</option><option>Acil</option></select></div></div><div class="field"><label>Görev açıklaması</label><textarea name="description"></textarea></div><label class="row"><input name="publish" type="checkbox"> Yayın görevi</label><button class="primary">Görevi Ekle</button></form>`,
   );
   $("#taskForm").onsubmit = (e) => {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.target));
+    const f=new FormData(e.target),d=Object.fromEntries(f);d.publish=f.has('publish');
     mutate(
       () => state.tasks.push({ id: uid(), ...d, day: +d.day, done: false }),
       "Yeni görev eklendi",
@@ -1223,7 +1275,7 @@ function render() {
   if (!session) return authScreen();
   if (!workspace) return workspaceScreen();
   (
-    ({ home, content: contents, detail, calendar, media, analytics })[page] ||
+    ({ home, content: contents, detail, production, calendar, media, analytics })[page] ||
     home
   )();
 }
