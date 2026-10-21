@@ -547,7 +547,7 @@ function detail() {
     )
     .join(
       "",
-    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div>${c.scenes.map((s) => `<article class="card scene"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><b>${escape(s.title)}</b><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.time)} • ${escape(s.narration)}</p><div class="prompt"><b>Grok Promptu</b><br>${escape(s.prompt)}</div><div class="row"><button class="link scenePhoto" data-scene="${s.id}">📷 Fotoğraf</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map(m=>`<div class="media">${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
+    )}</div><div class="sectionhead"><h2>Sahne planı</h2><button class="link" id="addScene">+ Sahne</button></div>${c.scenes.map((s) => `<article class="card scene"><div class="sceneNo">${String(s.no).padStart(2, "0")}</div><div class="thumb" style="${s.imageUrl ? `background-image:url('${s.imageUrl}');background-size:cover` : ""}">${s.imageUrl ? "" : "🎬"}</div><div><div class="row between"><b>${escape(s.title)}</b><span class="badge ${s.status === "Eksik" ? "short" : ""}">${escape(s.status)}</span></div><p class="muted">${escape(s.time)} • ${escape(s.narration)}</p><div class="prompt"><b>Grok Promptu</b><br>${escape(s.prompt)}</div><div class="row"><button class="link scenePhoto" data-scene="${s.id}">📷 Fotoğraf</button><button class="link sceneDelete" data-scene="${s.id}">Sil</button></div></div></article>`).join("") || '<div class="empty">Sahne eklenmedi.</div>'}<div class="card"><div class="sectionhead"><h2>Proje medyası</h2><button class="link" id="addContentMedia">+ Fotoğraf / video</button></div><div class="mediaGrid">${contentMedia.map(m=>`<div class="media ${m.type?.startsWith("video")?"video":""}" data-view-media="${m.id}">${mediaPreview(m)}<span class="mediaName">${escape(m.name)}</span></div>`).join("")}</div></div><div class="card"><div class="sectionhead"><h2>Kaynaklar</h2><button class="link" id="addSource">+ Kaynak</button></div>${sources.map((s) => `<div class="row between checkrow"><div><b>${escape(s.title)}</b><div class="muted">${escape(s.url)}</div></div><span class="badge">${s.verified ? "Doğrulandı" : "Kontrol"}</span></div>`).join("") || '<div class="muted">Henüz kaynak eklenmedi.</div>'}</div><div class="card"><div class="sectionhead"><h2>Ekip yorumları</h2></div>${comments.map((x) => `<div class="comment"><b>${escape(x.actor)}</b><p>${escape(x.text)}</p><span class="muted">${new Date(x.at).toLocaleString("tr-TR")}</span></div>`).join("")}<form id="commentForm" class="aiInput"><input name="text" placeholder="Yorum veya kontrol notu…" required><button class="iconbtn" style="background:var(--green);color:#052417"><i data-lucide="send"></i></button></form></div><input hidden type="file" id="detailFile" accept="image/*,video/*" multiple>`;
   shell(body, "İçerik Detayı", true);
   document
     .querySelectorAll("[data-check]")
@@ -596,6 +596,7 @@ function detail() {
             c.id,
           )),
     );
+  bindMediaViewer();
   $("#commentForm").onsubmit = (e) => {
     e.preventDefault();
     const text = new FormData(e.target).get("text");
@@ -662,7 +663,7 @@ function calendar() {
   icons();
 }
 function mediaPreview(m){
-  if(m.type?.startsWith("video"))return `<video src="${m.url}" controls preload="metadata"></video>`;
+  if(m.type?.startsWith("video"))return `<video src="${m.url}" muted playsinline preload="metadata"></video>`;
   if(m.type?.startsWith("audio"))return `<div class="audioTile">🎙️<audio src="${m.url}" controls></audio></div>`;
   return m.url?`<img src="${m.url}" alt="${escape(m.name)}" loading="lazy">`:"📁";
 }
@@ -671,7 +672,35 @@ function media(){
   shell(body,"Medya Arşivi");$("#upload").onclick=()=>$("#fileInput").click();$("#fileInput").onchange=e=>uploadFiles([...e.target.files]);
   $("#mediaSearch").oninput=e=>document.querySelectorAll("[data-media]").forEach(x=>x.style.display=state.media.find(m=>m.id===x.dataset.media)?.name.toLowerCase().includes(e.target.value.toLowerCase())?"":"none");
   document.querySelectorAll("[data-kind]").forEach(x=>x.onclick=()=>{document.querySelectorAll("[data-kind]").forEach(t=>t.classList.toggle("active",t===x));document.querySelectorAll("[data-media]").forEach(m=>m.style.display=x.dataset.kind==="all"||m.dataset.type.startsWith(x.dataset.kind)?"":"none")});
-  document.querySelectorAll("[data-delete]").forEach(x=>x.onclick=e=>{e.stopPropagation();deleteMedia(x.dataset.delete)});icons();
+  document.querySelectorAll("[data-delete]").forEach(x=>x.onclick=e=>{e.stopPropagation();deleteMedia(x.dataset.delete)});bindMediaViewer();icons();
+}
+
+function bindMediaViewer(){
+  document.querySelectorAll("[data-media],[data-view-media]").forEach(tile=>{
+    tile.setAttribute("role","button");
+    tile.setAttribute("tabindex","0");
+    const open=()=>openMediaViewer(tile.dataset.media||tile.dataset.viewMedia);
+    tile.onclick=open;
+    tile.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open()}};
+  });
+}
+function openMediaViewer(id){
+  const items=state.media.filter(m=>m.url&&(m.type?.startsWith("image")||m.type?.startsWith("video")));
+  let index=items.findIndex(m=>m.id===id);if(index<0)return;
+  document.querySelector(".mediaViewer")?.remove();
+  const overlay=document.createElement("div");overlay.className="mediaViewer";
+  const draw=()=>{
+    const m=items[index],isVideo=m.type?.startsWith("video");
+    overlay.innerHTML=`<div class="viewerTop"><div><b>${escape(m.name||"Medya")}</b><span>${index+1} / ${items.length}</span></div><button class="viewerClose" aria-label="Kapat">×</button></div><div class="viewerStage">${isVideo?`<video src="${m.url}" controls autoplay playsinline></video>`:`<img src="${m.url}" alt="${escape(m.name||"Fotoğraf")}">`}</div><div class="viewerControls"><button class="viewerNav" data-prev aria-label="Önceki" ${items.length<2?"disabled":""}>‹</button><a class="viewerOpen" href="${m.url}" target="_blank" rel="noopener"><i data-lucide="external-link"></i> Aç / İndir</a><button class="viewerNav" data-next aria-label="Sonraki" ${items.length<2?"disabled":""}>›</button></div>`;
+    overlay.querySelector(".viewerClose").onclick=close;
+    overlay.querySelector("[data-prev]").onclick=()=>{index=(index-1+items.length)%items.length;draw()};
+    overlay.querySelector("[data-next]").onclick=()=>{index=(index+1)%items.length;draw()};
+    icons();
+  };
+  const close=()=>{document.removeEventListener("keydown",keyboard);overlay.remove()};
+  const keyboard=e=>{if(e.key==="Escape")close();if(e.key==="ArrowLeft"){index=(index-1+items.length)%items.length;draw()}if(e.key==="ArrowRight"){index=(index+1)%items.length;draw()}};
+  overlay.onclick=e=>{if(e.target===overlay)close()};
+  document.body.appendChild(overlay);document.addEventListener("keydown",keyboard);draw();
 }
 
 async function uploadFiles(files, meta = {}) {
